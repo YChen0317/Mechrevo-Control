@@ -36,3 +36,15 @@ BatteryChargeRationing 与 Battery_Charge_Mode 是两个独立的类，对应 WM
 固件同时提供 WMBB 专用性能档位方法和 WMCD 通用命令接口。WMBB 引用 PPMD、ODV0、IETM、CMSW。WMCD 的方法引用包括 GPFM、SPFM、GTPS、STPS 等内部函数。之前对 EmOSDFunction 的静态分析确认它的 WMIHelper 通过 WMCD 读写档位。Windows 厂商 WMI 类的存在不能确定 WinUI 发送的哪条 MQTT 消息最终调用 WMBB 或 WMCD。WMAF 引用 F1RL/F1RH 和 F2RL/F2RH，表明固件方法包含两组风扇测量字段。是否装有两路可读风扇、计算关系和转速单位仍需实机返回值确认。
 
 本轮未调用任何写入方法。功耗限制数值、事件负载、返回字段在 Windows 的投影及持久化行为待验证。
+
+## 读取参数与方法分派
+
+管理员实机查询显示，GetBatteryChargeRationing、Get_Battery_Charge_Mode 和 GetPowerPlanMode 均声明 UInt64 类型的 Data 输入。DSDT 中，这三个读取分支按 WMI 方法编号分派，读取分支不取用输入缓冲区。因此，在 Windows 的 WmiMethodId 与下表匹配时，Data 可传 UInt64 的 0 作为占位。方法编号仍需通过 Windows 元数据核实。
+
+| ACPI 方法 | 读取分支编号 | 返回缓冲区 |
+|---|---:|---|
+| WMDA | 1 | 偏移 0 的状态字段，偏移 2 读取 MICP，偏移 3 读取 MXCP |
+| WMBE | 2 | 偏移 0 的状态字段，偏移 2 读取 EBCM |
+| WMBB | 2 | 偏移 0 的状态字段，偏移 2 读取 PPMD。读取分支还经 CMSW 写入通信字段 CMS0、CMS1。该分支没有写 PPMD |
+
+返回缓冲区的字段位置来自 AML。Windows 如何将该缓冲区投影到 CIM 属性，需以实机输出为准。目前尚未调用这三个 getter。
