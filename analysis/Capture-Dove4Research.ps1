@@ -1,6 +1,14 @@
 # Research capture for the Dove4 Rev05 firmware. Runs in Windows PowerShell 5.1.
 [CmdletBinding()]
-param([switch]$Load)
+param(
+    [switch]$Load,
+    [ValidateRange(0, 600)]
+    [int]$GameSeconds = 0
+)
+
+if ($Load -and $GameSeconds) {
+    throw 'Choose either -Load or -GameSeconds.'
+}
 
 $ErrorActionPreference = 'Stop'
 $bios = (Get-Item 'HKLM:\HARDWARE\DESCRIPTION\System\BIOS').GetValue('BIOSVersion')
@@ -51,9 +59,9 @@ function Read-Snapshot {
 }
 
 Read-Snapshot
-if (!$Load) { return }
+if (!$Load -and !$GameSeconds) { return }
 
-if (-not ('Dove4ResearchLoad' -as [type])) {
+if ($Load -and -not ('Dove4ResearchLoad' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.Diagnostics;
@@ -89,19 +97,25 @@ $paths = @(
     '\Thermal Zone Information(\_TZ.TZ00)\High Precision Temperature'
 )
 
+$interval = if ($Load) { 2 } else { 1 }
+$sampleCount = if ($Load) { 21 } else { $GameSeconds }
+$telemetryAt = if ($Load) { 34 } else { [math]::Floor($GameSeconds / 2) }
+if ($GameSeconds) {
+    'Capturing game telemetry. Return to the game now.'
+}
 'Second,PackageMilliwatts,FrequencyMHz,LimitFlags,AcpiZoneDecikelvin'
 $sampledUnderLoad = $false
 $clock = [Diagnostics.Stopwatch]::StartNew()
-$work = [Dove4ResearchLoad]::Run(45)
+$work = if ($Load) { [Dove4ResearchLoad]::Run(45) }
 try {
-    Get-Counter -Counter $paths -SampleInterval 2 -MaxSamples 21 | ForEach-Object {
+    Get-Counter -Counter $paths -SampleInterval $interval -MaxSamples $sampleCount | ForEach-Object {
         $values = foreach ($sample in $_.CounterSamples) {
             if ($sample.Status -eq 0) {
                 $sample.CookedValue.ToString('0.00', [Globalization.CultureInfo]::InvariantCulture)
             } else { '' }
         }
         '{0},{1}' -f [int]$clock.Elapsed.TotalSeconds, ($values -join ',')
-        if ($clock.Elapsed.TotalSeconds -ge 34 -and !$sampledUnderLoad) {
+        if ($clock.Elapsed.TotalSeconds -ge $telemetryAt -and !$sampledUnderLoad) {
             $sampledUnderLoad = $true
             Read-Dove4Value EmdAcpi_FanControl GetFanSpeed 1 1
             Read-Dove4Value EmdAcpi_FanControl GetFanSpeed 1 2
@@ -109,5 +123,5 @@ try {
         }
     }
 } finally {
-    $work.GetAwaiter().GetResult()
+    if ($work) { $work.GetAwaiter().GetResult() }
 }
