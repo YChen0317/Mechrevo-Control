@@ -112,3 +112,7 @@ Windows 枚举到内置面板 VXN03E8。其 EDID 的 DisplayID Type VII 详细�
 ## OSD 开关实测
 
 用户关闭原厂 OSD 后，按键测试没有弹出原厂提示。同一时点 MySetting/OSDHidden 为 1。未记录键盘灯是否实际切档。静态 IL 另外确认 ShowOSD.Window_Loaded 调用 Window.Hide 后仍继续进入事件分派。麦克风静音和刷新率代码均位于其后的分支。由此可确认隐藏提示的逻辑不会跳过这些代码分支。其物理效果尚未在 OSD 关闭时逐项实测。
+
+## Wi-Fi 与蓝牙开关实测
+
+用户在原厂控制中心关闭 Wi-Fi 与蓝牙，Windows 设置中的对应开关也变为关闭。读取设备枚举时，Intel AX211 和 Intel Wireless Bluetooth 均仍显示 Started。这确认测试改变了 Windows 所见的无线电开关状态，适配器继续由驱动管理。原厂服务通过哪一层 Windows API 应用开关还待定位。两项独立开关与飞行模式总开关的关系待热键实测。
