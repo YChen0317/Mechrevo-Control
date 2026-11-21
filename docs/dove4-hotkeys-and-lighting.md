@@ -54,3 +54,11 @@ WinUI 的 LightViewModel.SetCloseTime 将下拉选项转成秒数。程序集支
 | 通用页面按机型隐藏 | WinUI QuickSwitch 有数字区、Copilot、局部调光和麦克风降噪等支持筛选。实机 NumPadSupport=0、LightbarSupport=0、RGBLightbarSupport=0、LiquidCoolingSupport=0、TurboModeSupport=0。部分其他通用标志为 1，仍须和设备枚举交叉核对 |
 
 本轮未切换设备或设置。现有信息可确定 UI、服务、WMI 和记账状态的主要边界。要确认每个物理按键和摄像头电控，需要下一轮配对事件、状态与实际设备变化。
+
+## 摄像头开关实机对照
+
+用户打开摄像头开关后，同一个 USB Camera 功能节点 `USB\VID_1BAF&PID_28C8&MI_00` 从此前的 Disconnected 变为 Started。开启态同时枚举到上游 USB Composite Device，服务为 usbccgp。摄像头功能节点使用微软 usbvideo.inf 和 usbvideo 服务。机械革命的扩展 INF oem52.inf 为 MEP Camera Opt In，相关安装节把 FSMEnableMsEffects 设为 1。该节提供 Windows 摄像头效果配置。
+
+两次采样的 ECWebCamSwitch 均为 1，因此这个注册表值在本次对照中无法反映实际可见性。原厂 OSD 实际通过 PnP 设备是否存在来显示摄像头开关。设备节点从断开到启动表明开关改变了摄像头的 USB 枚举状态。关闭态还未读取上游复合节点，因此目前不能判断整个复合设备是否随开关消失。
+
+固件 ACPI 表 I2Pm_Rvp 中有 CAMERA_V3P3、CAMERA_V1P8 标签。当前尚无调用证据把这两个电源标签和此 USB 摄像头开关关联。即使复合节点整体退枚举，也需进一步区分断电、端口隔离和其他导致 USB 断开的实现。
