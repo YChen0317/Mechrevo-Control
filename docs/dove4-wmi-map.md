@@ -59,6 +59,6 @@ Windows PowerShell 5.1 中，三个方法的 WmiMethodId 与上述 AML 分支编
 | Get_Battery_Charge_Mode | 2 | True | 0 | 固件状态 0，EBCM 0 |
 | GetPowerPlanMode | 2 | True | 131072 | 0x0000000000020000。固件状态 0，PPMD 2 |
 
-Data 同时是输入占位与调用返回字段。性能值 0x20000 对应小端缓冲区偏移 2 的 02，验证了字段位置。原厂设置的 ModeSet 紧接这次采集仍为 2，与此前已标记为性能的状态一致。需在原厂界面切换到平衡后采一次确认 PPMD 的平衡值。固件返回的零阈值和零模式仅描述这一次采样，尚未通过改变原厂电池保护配置或观察电流证实它的行为含义。
+Data 同时是输入占位与调用返回字段。性能值 0x20000 对应小端缓冲区偏移 2 的 02，验证了字段位置。原厂设置的 ModeSet 紧接这次采集仍为 2，与此前已标记为性能的状态一致。随后通过原厂界面切到平衡，GetPowerPlanMode 返回 True 和 Data 65536，即 0x0000000000010000。偏移 2 为 01，确认本机 PPMD 的映射为 1 = 平衡、2 = 性能。这也与原厂 ModeSet 的两档记录一致。该读取方法返回档位标识，未返回 PL1、PL2 或时间窗口。固件返回的零阈值和零模式仅描述这一次采样，尚未通过改变原厂电池保护配置或观察电流证实它的行为含义。
 
 驱动包中找到 Intel IPF 的 dsp.dv、DTT 的 AdaptivePerformance、IntelligentThermalManagement 和 PowerBoss 等策略模块，以及 Lunar Lake PPM 配置包。这些文件支持继续追踪平台策略。包内存在某个策略模块并不能确定不同档位的 PL1 或 PL2。
