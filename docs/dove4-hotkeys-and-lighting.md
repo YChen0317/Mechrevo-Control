@@ -108,3 +108,7 @@ Windows 枚举到内置面板 VXN03E8。其 EDID 的 DisplayID Type VII 详细�
 ## Win 键锁实测
 
 用户在原厂控制中心禁用 Win 键后，单按该键没有弹出开始菜单。禁用时同步读取 MySetting/WinKeyLock 为 1，此前启用时记录为 0。确认原厂开关具有实际效果。按键在固件或 Windows 输入栈的哪一层被抑制，以及 Win 组合键是否全部受影响，仍未验证。
+
+## OSD 开关实测
+
+用户关闭原厂 OSD 后，按键测试没有弹出原厂提示。同一时点 MySetting/OSDHidden 为 1。未记录键盘灯是否实际切档。静态 IL 另外确认 ShowOSD.Window_Loaded 调用 Window.Hide 后仍继续进入事件分派。麦克风静音和刷新率代码均位于其后的分支。由此可确认隐藏提示的逻辑不会跳过这些代码分支。其物理效果尚未在 OSD 关闭时逐项实测。
