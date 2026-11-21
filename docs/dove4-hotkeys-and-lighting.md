@@ -86,3 +86,17 @@ DSDT 的 EC 查询方法和已安装 OSD 的编号可以直接对照。以下是
 Windows 枚举到内置面板 VXN03E8。其 EDID 的 DisplayID Type VII 详细时序包含 **2880×1800 @ 60 Hz 和 120 Hz** 两组。原厂 OSD 固件分派和屏幕能力已同时确认，快捷键实际切换仍待观察。[DisplayID 时序解析参考](https://code.googlesource.com/linux/torvalds/linux/%2B/4bf54e47525dcacd4c6cdd97fb5902592414dd7a/drivers/gpu/drm/drm_edid.c)
 
 本机当前枚举到 Intel Arc 140V、Realtek Audio、Intel Smart Sound、指纹设备、AX211 Wi-Fi、Intel Bluetooth、标准 ACPI 电池和适配器。系统无线电、WLAN、蓝牙服务均在运行。当前显示设备列表没有独显，控制中心 DGpuDirectConnectionSupport=1 不能单独证明本机有独显直连功能。系统当前摄像头重新处于连接状态。
+
+## 物理按键实测
+
+管理员 PowerShell 监听 OemWMIEvent 时，用户实际按了亮度、音量、Fn 锁、触摸板、麦克风和键盘灯键。未找到刷新率快捷键。结果如下。
+
+| 实测编号 | 与静态路径对应 |
+|---|---|
+| 0x50、0x51 | Fn 解锁、锁定。两个方向均实际触发 |
+| 0x30 | 关闭触摸板。随后读取原厂 TouchpadToggle 为 0 |
+| 0xA1 | 麦克风静音热键。未同时采集音频端点状态 |
+| 0x22 | 键盘灯高档提示。其余两档得自静态映射 |
+| 无事件 | 用户按下亮度和音量键时，此订阅没有收到厂商 OemWMIEvent。亮度另有已定位的 Intel HID 路径。Windows 也枚举到 Intel HID Consumer Control 集合，音量是否来自其中某个具体集合仍待按键采集 |
+
+后续的 PnP 枚举发现 Intel HID INTC816 的集合包括 Generic Desktop Wireless Radio Controls（usage page 1、usage 0x0C）及 System Control（usage page 1、usage 0x80）。系统同时公开 ACPI Sleep Button（PNP0C0E）。结合原厂虚拟 HID 未枚举的事实，Windows 有可用的原生飞行模式和睡眠输入路径。但仍需要逐键验证哪个集合发送报告、系统是否执行对应动作。刷新率功能的固件事件、程序和面板能力均已确认，实体触发组合未知。
