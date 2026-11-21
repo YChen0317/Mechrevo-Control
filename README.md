@@ -10,6 +10,10 @@
 
 构建 Windows 桌面界面从[前端交接文档](docs/frontend-handoff.md)开始。文档包含首版页面范围、演示数据要求、设备后端接入约定和验收条件。[控制台实现底稿](docs/dove4-implementation-reference.md)汇总实机证据与待验证能力。
 
+## 日用流畅档实验
+
+[实机验证计划](docs/dove4-daily-smooth.md)记录两档的 Core Temp 功耗观察、桌面动画对照方法及前后端分工，供开发时独立验收。
+
 ## 当前进度
 
 - `Get-PowerPlan.ps1` 读取当前 Windows 电源计划。已在目标机器验证输出与 `powercfg /getactivescheme` 一致。
