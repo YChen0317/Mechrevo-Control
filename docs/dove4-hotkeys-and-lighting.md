@@ -46,7 +46,7 @@ WinUI 的 LightViewModel.SetCloseTime 将下拉选项转成秒数。程序集支
 
 | 候选 | 本机证据与范围 |
 |---|---|
-| 60/120 Hz 快捷切换 | 本机已安装 OSD 有具体刷新率处理和两张提示图。需要读屏幕支持的模式或按键验证 |
+| 60/120 Hz 快捷切换 | 本机已安装 OSD 有具体刷新率处理和两张提示图。已从本机 EDID 核实 60 Hz 和 120 Hz，实际按键切换尚待验证 |
 | 自定义电池限充与电池详情 | 本机已回读独立的限充及充电模式接口。电池明细类还包含基本信息、实时数据、寿命容量及电芯电压方法。独立阈值控制与原厂界面的三个预设之间的关系仍待实测 |
 | 来电自启 | 本机 WMI 类 AutoPowerOn 和控制中心 AcRecoverySwitchSupport=1 同时存在，AcRecoverySwitchBiosSupport=0。应区分 UI 后台路径、BIOS 设置入口与实际 AC 恢复条件 |
 | 风扇和传感器 | WMI 已公开风扇转速、CPU 温度、EC/PD 版本、USB-C VBUS 与盖子状态。风扇控制接口也存在，可用风扇数量、单位和方式尚待读取 |
@@ -62,3 +62,27 @@ WinUI 的 LightViewModel.SetCloseTime 将下拉选项转成秒数。程序集支
 两次采样的 ECWebCamSwitch 均为 1，因此这个注册表值在本次对照中无法反映实际可见性。原厂 OSD 实际通过 PnP 设备是否存在来显示摄像头开关。设备节点从断开到启动表明开关改变了摄像头的 USB 枚举状态。用户再次关闭同一个开关后，复合设备与 Camera 功能节点均显示 Disconnected，已连接设备查询无匹配，上游 USB 根集线器仍为 Started。这确认了整个摄像头 USB 复合设备随开关退枚举。ECWebCamSwitch 仍为 1。
 
 固件 ACPI 表 I2Pm_Rvp 中有 CAMERA_V3P3、CAMERA_V1P8 标签。当前尚无调用证据把这两个电源标签和此 USB 摄像头开关关联。即使复合节点整体退枚举，也需进一步区分断电、端口隔离和其他导致 USB 断开的实现。
+
+## 实机固件按键分派
+
+DSDT 的 EC 查询方法和已安装 OSD 的编号可以直接对照。以下是静态分派。实际按键组合、机器型号的键帽布局与 Windows 同时产生的其他事件仍待采集。
+
+| ACPI 方法 | BIOS 行为 | 软件中的对应 |
+|---|---|---|
+| _Q06、_Q07、_Q08 | 调用 Intel HIDD.HPEM，参数分别为 0x14、0x13、0x08。HPEM 写 HIDX 并通知 HIDD 0xC0 | Intel 公开驱动将 0x14 和 0x13 映射为亮度降低和升高。0x08 已定位到 Intel HID 路径，其本机键位需配对核实。[Intel HID 事件驱动](https://github.com/torvalds/linux/blob/master/drivers/platform/x86/intel/hid.c) |
+| _QF4 | 根据 EC PPMD 1/2 设 EWMI 载荷 0x41/0x42、更新 ODV0 并通知 IETM，随后发出 EWMI D0 | 原厂 OSD 显示平衡或性能，同时固件通知平台热管理 |
+| _QF5 | EWMI D0 载荷 0xA2 | 刷新率切换路径 |
+| _QF6 | 根据 ECA0，EWMI D0 载荷 0x51 或 0x50 | Fn 锁提示 |
+| _QF7 | 切换 I2C1.TPD0.TPEN，通过 CMSW 传递状态，再发出 EWMI D0 载荷 0x31 或 0x30 | BIOS 自身已更改触摸板状态，原厂 OSD 提示开或关 |
+| _QAD | 切换同一个 TPEN 并写入 ECB9 | 存在另一条触摸板路径，需确认哪个实体键或条件触发 |
+| _QF8 | EWMI D0 载荷 0xA1 | EmOSD 通过 Windows 音频端点处理麦克风静音并显示反馈 |
+| _QF9 | 根据固件 TIZT 状态，EWMI D0 载荷 0x20、0x21 或 0x22 | 键盘灯关、半亮、亮的提示 |
+| _Q99 | EWMI D0 载荷 0xA0 | 已检查的 ShowOSD 分支中未找到对应图标，动作待验证 |
+| _Q54 | 若存在 ACPI 电源按钮设备 PWRB，向它发 0x80 通知 | 固件中存在独立的电源按钮路径，无法由此认定 Fn 睡眠键也使用它 |
+| _Q0C、_Q0D | 更新盖子状态，通知显卡和 LID0 | 固件有独立的盖子状态事件 |
+
+## 屏幕和当前设备
+
+Windows 枚举到内置面板 VXN03E8。其 EDID 的 DisplayID Type VII 详细时序包含 **2880×1800 @ 60 Hz 和 120 Hz** 两组。原厂 OSD 固件分派和屏幕能力已同时确认，快捷键实际切换仍待观察。[DisplayID 时序解析参考](https://code.googlesource.com/linux/torvalds/linux/%2B/4bf54e47525dcacd4c6cdd97fb5902592414dd7a/drivers/gpu/drm/drm_edid.c)
+
+本机当前枚举到 Intel Arc 140V、Realtek Audio、Intel Smart Sound、指纹设备、AX211 Wi-Fi、Intel Bluetooth、标准 ACPI 电池和适配器。系统无线电、WLAN、蓝牙服务均在运行。当前显示设备列表没有独显，控制中心 DGpuDirectConnectionSupport=1 不能单独证明本机有独显直连功能。系统当前摄像头重新处于连接状态。
