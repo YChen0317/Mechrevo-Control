@@ -115,4 +115,4 @@ Windows 枚举到内置面板 VXN03E8。其 EDID 的 DisplayID Type VII 详细�
 
 ## Wi-Fi 与蓝牙开关实测
 
-用户在原厂控制中心关闭 Wi-Fi 与蓝牙，Windows 设置中的对应开关也变为关闭。读取设备枚举时，Intel AX211 和 Intel Wireless Bluetooth 均仍显示 Started。这确认测试改变了 Windows 所见的无线电开关状态，适配器继续由驱动管理。原厂服务通过哪一层 Windows API 应用开关还待定位。两项独立开关与飞行模式总开关的关系待热键实测。
+用户在原厂控制中心关闭 Wi-Fi 与蓝牙时，Windows 设置中的对应开关也显示关闭。稍后的设备枚举中，Intel AX211 和 Intel Wireless Bluetooth 均显示 Started。枚举前用户可能已经重新打开开关，因此这份快照无法确定关闭时的 PnP 状态。实测确认原厂开关和 Windows 界面联动。服务端调用的确切 Windows API 仍待定位。
