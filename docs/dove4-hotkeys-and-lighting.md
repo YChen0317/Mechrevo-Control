@@ -100,3 +100,7 @@ Windows 枚举到内置面板 VXN03E8。其 EDID 的 DisplayID Type VII 详细�
 | 无事件 | 用户按下亮度和音量键时，此订阅没有收到厂商 OemWMIEvent。亮度另有已定位的 Intel HID 路径。Windows 也枚举到 Intel HID Consumer Control 集合，音量是否来自其中某个具体集合仍待按键采集 |
 
 后续的 PnP 枚举发现 Intel HID INTC816 的集合包括 Generic Desktop Wireless Radio Controls（usage page 1、usage 0x0C）及 System Control（usage page 1、usage 0x80）。系统同时公开 ACPI Sleep Button（PNP0C0E）。结合原厂虚拟 HID 未枚举的事实，Windows 有可用的原生飞行模式和睡眠输入路径。但仍需要逐键验证哪个集合发送报告、系统是否执行对应动作。刷新率功能的固件事件、程序和面板能力均已确认，实体触发组合未知。
+
+## 键盘背光计时实测
+
+用户在原厂灯光页选 10 秒并让键盘闲置。约 9.6 秒后背光熄灭，按普通键后背光重新亮起。这验证了原厂设置可在本机生效，以及普通键盘活动能恢复背光。随后读取原厂注册表 CloseTimer 为 10。尚未验证该设置能否跨重启保持，以及退出原厂后台后的表现。
