@@ -1,0 +1,5 @@
+{
+  "name": "无界 14 MAX 控制台 · Mechrevo Control",
+  "description": "机械革命无界 14 MAX（Dove4 / Core Ultra 7 256V）单进程 Windows 控制台前端演示版，提供两档确认切换、系统托盘、OSD 提示、低负载遥测门控与可替换设备客户端契约。",
+  "requestFramePermissions": []
+}
