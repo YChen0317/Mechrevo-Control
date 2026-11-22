@@ -8,7 +8,7 @@ trap {
     exit 1
 }
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
-if (-not ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole('Administrator')) {
+if (-not ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     if ($Elevated) { throw 'Administrator access was not granted.' }
     $arguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -Elevated' -f $PSCommandPath
     $arguments += ' -ShowFailure'
