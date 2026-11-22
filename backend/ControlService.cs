@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipes;
 using System.Management;
+using Microsoft.Management.Infrastructure;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.ServiceProcess;
@@ -26,18 +27,29 @@ internal sealed class ControlService : ServiceBase
         object value; return row.TryGetValue(key,out value) ? value : null;
     }
     static string ReadMode() {
-        using(var query = new ManagementObjectSearcher(@"root\wmi","SELECT * FROM EmdAcpi_PowerPlanMode WHERE Active=TRUE"))
-        using(var rows = query.Get()) foreach(ManagementObject row in rows) using(row)
-        using(var input = row.GetMethodParameters("GetPowerPlanMode")) {
-            input["Data"] = 0UL;
-            using(var output = row.InvokeMethod("GetPowerPlanMode",input,null)) {
-                if(!Convert.ToBoolean(output["ReturnValue"])) return null;
-                ulong mode = (Convert.ToUInt64(output["Data"]) >> 16) & 255;
-                return mode==1 ? "balanced" : mode==2 ? "performance" : null;
+        const string wmiNamespace = "root/wmi";
+        using(var session = CimSession.Create(null))
+        using(var options = new Microsoft.Management.Infrastructure.Options.CimOperationOptions {
+            Timeout = TimeSpan.FromSeconds(3)
+        }) {
+            foreach(var row in session.QueryInstances(wmiNamespace, "WQL",
+                    "SELECT * FROM EmdAcpi_PowerPlanMode WHERE Active=TRUE", options)) using(row)
+            using(var parameters = new CimMethodParametersCollection()) {
+                parameters.Add(CimMethodParameter.Create("Data", 0UL, Microsoft.Management.Infrastructure.CimType.UInt64, CimFlags.In));
+                using(var output = session.InvokeMethod(wmiNamespace, row, "GetPowerPlanMode", parameters, options)) {
+                    if(!Convert.ToBoolean(output.ReturnValue.Value))
+                        throw new InvalidOperationException("Firmware getter returned failure.");
+                    ulong data = Convert.ToUInt64(output.OutParameters["Data"].Value);
+                    ulong mode = (data >> 16) & 255;
+                    if((data & 255) == 0 && mode == 1) return "balanced";
+                    if((data & 255) == 0 && mode == 2) return "performance";
+                    throw new InvalidOperationException("Unexpected firmware getter data: " + data);
+                }
             }
         }
-        return null;
+        throw new InvalidOperationException("No active EmdAcpi_PowerPlanMode instance.");
     }
+
     static object First(string cls,string field) {
         using(var q = new ManagementObjectSearcher("SELECT "+field+" FROM "+cls))
         using(var rows=q.Get()) foreach(ManagementObject row in rows) using(row) return row[field];
@@ -51,8 +63,10 @@ internal sealed class ControlService : ServiceBase
             var flag=power.BatteryChargeStatus;
             bool battery=flag!=BatteryChargeStatus.Unknown && (flag & BatteryChargeStatus.NoSystemBattery)==0;
             var percent=power.BatteryLifePercent;
+            string mode = null, modeError = null;
+            try {mode = ReadMode();} catch(Exception ex) {modeError = ex.Message;}
             var row=new Dictionary<string,object> {
-                {"serviceVersion","0.1.0"},{"instanceId",Instance},{"revision",++revision},{"model",model},{"mode",Try(()=>ReadMode())},
+                {"serviceVersion","0.1.1"},{"instanceId",Instance},{"revision",++revision},{"model",model},{"mode",mode},{"modeError",modeError},
                 {"ac",power.PowerLineStatus==PowerLineStatus.Unknown ? null : (object)(power.PowerLineStatus==PowerLineStatus.Online)},
                 {"batteryPercent",battery && percent>=0 && percent<=1 ? (object)Math.Round(percent*100) : null},
                 {"charging",battery ? (object)((flag & BatteryChargeStatus.Charging)!=0) : null},
@@ -94,7 +108,7 @@ internal sealed class ControlService : ServiceBase
                         var caps=new Dictionary<string,object>();
                         foreach(var field in new[]{"mode","ac","batteryPercent","charging","packageW","cpuMHz"})
                             caps[field]=Cap(row[field],false,field=="mode"?new[]{"balanced","performance"}:new string[0],
-                                field=="mode"?"Firmware writes unverified":row[field]==null?"Reading unavailable":null);
+                                field=="mode"?(row["modeError"] as string ?? "Firmware writes unverified"):row[field]==null?"Reading unavailable":null);
                         result=caps;
                     }
                     else if(method=="subscribeStatus") result=new {subscribed=true};
@@ -159,8 +173,9 @@ internal sealed class ControlService : ServiceBase
                 }
             }
         } catch(Exception ex) {log.AppendLine(ex.GetBaseException().Message);}
-        try {log.AppendLine("Independent root\\wmi (current user): "+(ReadMode()??"unknown"));}
-        catch(Exception ex){log.AppendLine("Independent WMI: "+ex.Message);}
+        try {log.AppendLine("Independent CIM root/wmi (current user): "+(ReadMode()??"unknown"));}
+        catch(Exception ex){log.AppendLine("Independent CIM unavailable under current user: "+ex.Message);}
+        log.Insert(0,"MechrevoCheck 0.1.1 | IPC v1"+Environment.NewLine);
         Console.WriteLine(log);
         Console.WriteLine("Enter = exit, S = save report on Desktop");
         if(string.Equals(Console.ReadLine(),"s",StringComparison.OrdinalIgnoreCase)) {
