@@ -147,7 +147,7 @@ internal sealed class ControlService : ServiceBase
         var log=new StringBuilder();
         try {
             using(var svc=new ServiceController("MechrevoControl")) log.AppendLine("Service: "+svc.Status);
-            using(var pipe=new NamedPipeClientStream(".",Pipe,PipeAccessRights.ReadWrite | PipeAccessRights.Synchronize,PipeOptions.Asynchronous,TokenImpersonationLevel.Identification)) {
+            using(var pipe=new NamedPipeClientStream(".",Pipe,PipeAccessRights.ReadWrite | PipeAccessRights.Synchronize,PipeOptions.Asynchronous,TokenImpersonationLevel.Identification,HandleInheritability.None)) {
                 pipe.Connect(4000);
                 using(var reader=new StreamReader(pipe,Utf8,false,4096,true))
                 using(var writer=new StreamWriter(pipe,Utf8,4096,true){AutoFlush=true})
