@@ -1,7 +1,27 @@
+param([switch]$Elevated, [switch]$ShowFailure)
+
 $ErrorActionPreference = 'Stop'
+trap {
+    if (-not $ShowFailure) { throw $_ }
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    Read-Host 'Press Enter to close' | Out-Null
+    exit 1
+}
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole('Administrator')) {
-    throw 'Right-click Update.cmd and select Run as administrator.'
+    if ($Elevated) { throw 'Administrator access was not granted.' }
+    $arguments = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -Elevated' -f $PSCommandPath
+    $arguments += ' -ShowFailure'
+    try {
+        $process = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -Verb RunAs -ArgumentList $arguments -Wait -PassThru
+    } catch {
+        throw "Could not get administrator access. Approve the Windows prompt or enter administrator credentials. $($_.Exception.Message)"
+    }
+    if ($process.ExitCode -ne 0) {
+        throw "The elevated update failed (exit code $($process.ExitCode))."
+    }
+    Write-Host 'Updated. Double-click the new MechrevoCheck.exe as your normal user.'
+    exit 0
 }
 $name = 'MechrevoControl'
 $exe = Join-Path $env:ProgramFiles 'MechrevoControl\MechrevoCheck.exe'
