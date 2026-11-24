@@ -128,13 +128,13 @@ public sealed class NamedPipeDeviceClient : IDeviceClient
                     var data = root.GetProperty("data");
                     DeviceSnapshot? previous;
                     lock (_stateLock) previous = _last;
-                    if (previous?.ServiceInstanceId == ReadText(data, "instanceId") &&
+                    if (previous is not null && previous.ServiceInstanceId == ReadText(data, "instanceId") &&
                         previous.Revision >= data.GetProperty("revision").GetInt64() &&
                         ConnectionState == ConnectionState.Connected)
                         continue;
                     var snapshot = AcceptSnapshot(data);
                     var caps = previous?.ServiceInstanceId != snapshot.ServiceInstanceId ||
-                        previous?.HardwareMode == HardwarePerformanceMode.Unknown || snapshot.HardwareMode == HardwarePerformanceMode.Unknown ||
+                        (previous?.HardwareMode == HardwarePerformanceMode.Unknown) != (snapshot.HardwareMode == HardwarePerformanceMode.Unknown) ||
                         ConnectionState != ConnectionState.Connected
                         ? await GetCapabilitiesAsync(ct).ConfigureAwait(false) : null;
                     Publish("status", ConnectionState.Connected, snapshot, caps);
