@@ -1,0 +1,3 @@
+@echo off
+powershell -NoProfile -Command "$out=Join-Path ([Environment]::GetFolderPath('Desktop')) ('Mechrevo-WMI-'+(Get-Date -Format yyyyMMdd-HHmmss)+'.txt'); & { Get-CimInstance Win32_BIOS | Select-Object SMBIOSBIOSVersion; $c=Get-CimClass -Namespace root/wmi -ClassName EmdAcpi_PowerPlanMode -ErrorAction Stop; foreach($m in $c.CimClassMethods){'Method '+$m.Name; $m.Qualifiers | Format-Table Name,Value; $m.Parameters | Format-List Name,CimType,Qualifiers}; Get-CimInstance -Namespace root/wmi -ClassName EmdAcpi_PowerPlanMode -Filter 'Active=TRUE' | Invoke-CimMethod -MethodName GetPowerPlanMode -Arguments @{Data=[uint64]0} } *>&1 | Out-String -Width 240 | Tee-Object -FilePath $out; Write-Host $out"
+pause

@@ -8,7 +8,7 @@ namespace MechrevoControl.Frontend;
 
 /// <summary>
 /// Single-process Windows frontend host:
-/// - Owns one replaceable IDeviceClient (DemoDeviceClient now, NamedPipeDeviceClient once backend lands).
+/// - Owns one replaceable IDeviceClient (hardware by default, demo on request).
 /// - Owns one resident Win32 NotifyIcon tray menu (0% idle CPU, minimal working set).
 /// - Creates MainWindow strictly on demand and destroys it on close while pausing telemetry.
 /// - Shows lightweight topmost OsdWindow on hotkey confirmation and closes it after 1000/4000ms.
@@ -22,13 +22,16 @@ public partial class App : System.Windows.Application
     private MainWindow? _mainWindow;
     private OsdWindow? _osdWindow;
     private Forms.ToolStripMenuItem? _statusItem;
+    private Forms.ToolStripMenuItem? _balancedItem;
+    private Forms.ToolStripMenuItem? _performanceItem;
+    public bool CanSwitch { get; private set; }
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
         // Single replaceable client entry point
-        DeviceClient = new DemoDeviceClient();
+        DeviceClient = e.Args.Contains("--demo") ? new DemoDeviceClient() : new NamedPipeDeviceClient();
         DeviceClient.StatusChanged += OnClientStatusChanged;
         DeviceClient.HotkeyReceived += OnClientHotkeyReceived;
 
@@ -39,13 +42,17 @@ public partial class App : System.Windows.Application
     private void InitTrayIcon()
     {
         var menu = new Forms.ContextMenuStrip();
-        _statusItem = new Forms.ToolStripMenuItem("演示数据 · 当前：硬件平衡档") { Enabled = false };
+        _statusItem = new Forms.ToolStripMenuItem("正在读取设备状态…") { Enabled = false };
         menu.Items.Add(_statusItem);
         menu.Items.Add(new Forms.ToolStripSeparator());
 
         menu.Items.Add("打开主窗口", null, (_, _) => Dispatcher.Invoke(ShowOrActivateMainWindow));
-        menu.Items.Add("切换至 平衡档（读回确认）", null, async (_, _) => await DeviceClient.SetPerformanceModeAsync(HardwarePerformanceMode.Balanced));
-        menu.Items.Add("切换至 性能档（读回确认）", null, async (_, _) => await DeviceClient.SetPerformanceModeAsync(HardwarePerformanceMode.Performance));
+        _balancedItem = new Forms.ToolStripMenuItem("切换至平衡档") { Enabled = false };
+        _performanceItem = new Forms.ToolStripMenuItem("切换至性能档") { Enabled = false };
+        _balancedItem.Click += async (_, _) => await SwitchFromTrayAsync(HardwarePerformanceMode.Balanced);
+        _performanceItem.Click += async (_, _) => await SwitchFromTrayAsync(HardwarePerformanceMode.Performance);
+        menu.Items.Add(_balancedItem);
+        menu.Items.Add(_performanceItem);
 
         var osdToggle = new Forms.ToolStripMenuItem("启用本应用 OSD 提示") { Checked = true, CheckOnClick = true };
         osdToggle.CheckedChanged += (_, _) => OsdEnabled = osdToggle.Checked;
@@ -57,7 +64,7 @@ public partial class App : System.Windows.Application
         _trayIcon = new Forms.NotifyIcon
         {
             Icon = SystemIcons.Application,
-            Text = "无界 14 MAX 控制台（演示数据）",
+            Text = DeviceClient.DataSource == "demo" ? "无界 14 MAX 控制台（演示）" : "无界 14 MAX 控制台",
             Visible = true,
             ContextMenuStrip = menu
         };
@@ -86,11 +93,28 @@ public partial class App : System.Windows.Application
         }
     }
 
+    private async Task SwitchFromTrayAsync(HardwarePerformanceMode mode)
+    {
+        ShowOrActivateMainWindow();
+        if (_mainWindow is not null) await _mainWindow.SwitchModeAsync(mode);
+    }
+
+    internal static string ModeLabel(HardwarePerformanceMode mode) => mode switch
+    {
+        HardwarePerformanceMode.Balanced => "硬件平衡档",
+        HardwarePerformanceMode.Performance => "硬件性能档",
+        _ => "硬件档位未知"
+    };
+
     private void OnClientStatusChanged(StatusEvent evt)
     {
         Dispatcher.BeginInvoke(() =>
         {
             if (_statusItem is null) return;
+            if (evt.Capabilities is not null) CanSwitch = evt.Capabilities.PerformanceMode.Writable;
+            var canWrite = evt.ConnectionState == ConnectionState.Connected && CanSwitch;
+            if (_balancedItem is not null) _balancedItem.Enabled = canWrite;
+            if (_performanceItem is not null) _performanceItem.Enabled = canWrite;
             if (evt.ConnectionState == ConnectionState.Disconnected)
             {
                 _statusItem.Text = "服务已断线（快照已过期）";
@@ -98,7 +122,7 @@ public partial class App : System.Windows.Application
             }
             if (evt.Snapshot is not null)
             {
-                var modeLabel = evt.Snapshot.HardwareMode == HardwarePerformanceMode.Performance ? "硬件性能档" : "硬件平衡档";
+                var modeLabel = ModeLabel(evt.Snapshot.HardwareMode);
                 var prefix = evt.Snapshot.DataSource == "demo" ? "演示数据" : "实机";
                 _statusItem.Text = $"{prefix} · {modeLabel} · {evt.Snapshot.PowerSource}";
             }

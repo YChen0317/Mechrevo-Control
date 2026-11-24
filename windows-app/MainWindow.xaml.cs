@@ -15,6 +15,10 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         _app = app;
+        SetSwitchEnabled(false);
+        bool demo = app.DeviceClient.DataSource == "demo";
+        Title = demo ? "无界 14 MAX 控制台 · 演示" : "无界 14 MAX 控制台";
+        DemoControls.Visibility = demo ? Visibility.Visible : Visibility.Collapsed;
         _app.DeviceClient.StatusChanged += OnStatusChanged;
         Loaded += async (_, _) => await RefreshInitialAsync();
         Closed += (_, _) => _app.DeviceClient.StatusChanged -= OnStatusChanged;
@@ -24,12 +28,13 @@ public partial class MainWindow : Window
     {
         try
         {
-            var snap = await _app.DeviceClient.GetSnapshotAsync();
+            var (_, snap) = await _app.DeviceClient.ReconnectAsync();
             RenderSnapshot(snap, _app.DeviceClient.ConnectionState);
         }
         catch (Exception ex)
         {
-            ShowError($"初始化读取失败：{ex.Message}");
+            ShowError($"读取设备状态失败：{ex.Message}");
+            ReconnectBtn.Visibility = Visibility.Visible;
         }
     }
 
@@ -38,6 +43,8 @@ public partial class MainWindow : Window
         Dispatcher.BeginInvoke(() =>
         {
             if (evt.Error is not null) ShowError($"{evt.Error.Code} · {evt.Error.Message}");
+            if (evt.Capabilities is not null && evt.ConnectionState == ConnectionState.Connected)
+                HideError();
             if (evt.Snapshot is not null) RenderSnapshot(evt.Snapshot, evt.ConnectionState);
             else if (evt.ConnectionState == ConnectionState.Disconnected)
             {
@@ -50,7 +57,7 @@ public partial class MainWindow : Window
     private void RenderSnapshot(DeviceSnapshot snap, ConnectionState conn)
     {
         var offline = conn == ConnectionState.Disconnected;
-        var modeText = snap.HardwareMode == HardwarePerformanceMode.Performance ? "硬件性能档" : "硬件平衡档";
+        var modeText = App.ModeLabel(snap.HardwareMode);
         var policyText = snap.SelectedPolicy switch
         {
             UserPolicyMode.DailySmooth => "日用流畅",
@@ -66,7 +73,7 @@ public partial class MainWindow : Window
         SubtitleText.Text = $"{(snap.DataSource == "demo" ? "演示数据" : "实机")} · Rev #{snap.Revision} · 采集 {snap.CapturedAt:HH:mm:ss}";
 
         ReconnectBtn.Visibility = offline ? Visibility.Visible : Visibility.Collapsed;
-        SetSwitchEnabled(!offline && !_isSwitching);
+        SetSwitchEnabled(conn == ConnectionState.Connected && !_isSwitching && _app.CanSwitch && snap.HardwareMode != HardwarePerformanceMode.Unknown);
 
         var activeBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x25, 0x63, 0xEB));
         var idleBrush = new SolidColorBrush(System.Windows.Media.Color.FromRgb(0x1E, 0x29, 0x3B));
@@ -74,9 +81,9 @@ public partial class MainWindow : Window
         PerformanceBtn.Background = snap.HardwareMode == HardwarePerformanceMode.Performance ? activeBrush : idleBrush;
     }
 
-    private async Task SwitchModeAsync(HardwarePerformanceMode target)
+    internal async Task SwitchModeAsync(HardwarePerformanceMode target)
     {
-        if (_isSwitching) return;
+        if (_isSwitching || !_app.CanSwitch || _app.DeviceClient.ConnectionState != ConnectionState.Connected) return;
         _isSwitching = true;
         SetSwitchEnabled(false);
         HideError();
@@ -89,17 +96,22 @@ public partial class MainWindow : Window
             if (!result.Ok && result.Error is not null)
             {
                 ShowError($"{result.Error.Code} · {result.Error.Message}（{result.Error.Detail}）");
-                SwitchHintText.Text = "切档未确认，已严格保留最后一次读回确认的档位。";
+                SwitchHintText.Text = "切档未确认，请查看当前硬件档位。";
             }
             else
             {
                 SwitchHintText.Text = "已收到读回确认并更新当前生效档位。";
             }
         }
+        catch (Exception ex)
+        {
+            ShowError(ex.Message);
+            SwitchHintText.Text = "切档结果未知，请重新连接查看当前档位。";
+        }
         finally
         {
             _isSwitching = false;
-            SetSwitchEnabled(_app.DeviceClient.ConnectionState == ConnectionState.Connected);
+            SetSwitchEnabled(_app.DeviceClient.ConnectionState == ConnectionState.Connected && _app.CanSwitch);
         }
     }
 
@@ -123,8 +135,7 @@ public partial class MainWindow : Window
     private async void OnReconnectClick(object sender, RoutedEventArgs e)
     {
         HideError();
-        var (_, snap) = await _app.DeviceClient.ReconnectAsync();
-        RenderSnapshot(snap, ConnectionState.Connected);
+        await RefreshInitialAsync();
     }
 
     private void OnOutcomeChanged(object sender, SelectionChangedEventArgs e)
