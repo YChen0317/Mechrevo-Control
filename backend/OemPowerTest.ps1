@@ -132,8 +132,46 @@ function Capture-Phase([string]$round,[int]$step,[string]$mode) {
 try {
     $bios = (Get-CimInstance Win32_BIOS -OperationTimeoutSec 4).SMBIOSBIOSVersion
     if ($bios -ne 'WUJIE14Max_Dove4_LNL326_MC_OLED_Rev05') { throw "Unexpected BIOS: $bios" }
-    $snap = Request 'getSnapshot' ''
-    if ($snap.ac -ne $true -or $null -eq $snap.packageW) { throw 'Connect AC and verify there is a package power reading.' }
+    $backend = Get-Service -Name MechrevoControl
+    Log "MechrevoControl initial state: $($backend.Status)"
+    if ($backend.Status -eq 'Stopped') {
+        Start-Service -Name MechrevoControl
+        Log 'Started MechrevoControl.'
+    }
+    $backend.WaitForStatus('Running',[TimeSpan]::FromSeconds(15))
+
+    $snap = $null
+    $lastError = $null
+    for ($attempt = 0; $attempt -lt 4; $attempt++) {
+        try {
+            $snap = Request 'getSnapshot' ''
+            if ($snap.ac -ne $true) { throw 'Connect AC before starting the test.' }
+            if ($null -ne $snap.packageW) { break }
+        } catch {
+            $lastError = $_
+            $snap = $null
+        }
+        Start-Sleep -Seconds 2
+    }
+    if ($null -eq $snap -or $null -eq $snap.packageW) {
+        $backend.Refresh()
+        throw "Backend preflight failed, service=$($backend.Status). $lastError"
+    }
+    Log "Backend ready: $($snap.serviceVersion), packageW=$($snap.packageW)"
+
+    $missingServices = @(Get-Service -Name $serviceNames | Where-Object Status -ne 'Running')
+    if ($missingServices.Count) {
+        Log "OEM services required for baseline A: $($missingServices.Name -join ', ')"
+        if ((Read-Host 'Type START to start the listed OEM services for baseline A') -cne 'START') {
+            Log 'Cancelled before OEM baseline.'
+            return
+        }
+        foreach ($service in $missingServices) {
+            if ($service.Status -eq 'Stopped') { Start-Service -Name $service.Name }
+            $service.WaitForStatus('Running',[TimeSpan]::FromSeconds(15))
+            Log "OEM service running: $($service.Name)"
+        }
+    }
     $initialServices = @(Get-Service -Name $serviceNames | Where-Object Status -eq 'Running' | Select-Object -ExpandProperty Name)
     if ($initialServices.Count -ne $serviceNames.Count) { throw 'Both OEM services must be running for baseline A.' }
     $initial = ReadFirmware
