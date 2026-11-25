@@ -20,6 +20,7 @@ public sealed class NamedPipeDeviceClient : IDeviceClient
     private DeviceSnapshot? _last;
     private string _serviceVersion = "未知";
     private Task? _watch;
+    private Task? _hotkeyWatch;
 
     public NamedPipeDeviceClient(string pipeName = DefaultPipeName) => _pipePath = @"\\.\pipe\" + pipeName;
 
@@ -27,8 +28,7 @@ public sealed class NamedPipeDeviceClient : IDeviceClient
     public string DataSource => "hardware";
     public ConnectionState ConnectionState { get; private set; } = ConnectionState.Disconnected;
     public event Action<StatusEvent>? StatusChanged;
-    // Backend 0.2.0 returns CapabilityUnavailable for hotkey subscriptions.
-    public event Action<HotkeyEvent>? HotkeyReceived { add { } remove { } }
+    public event Action<HotkeyEvent>? HotkeyReceived;
 
     public async Task<DeviceSnapshot> GetSnapshotAsync(CancellationToken ct = default) =>
         AcceptSnapshot(await CallAsync("getSnapshot", null, ct).ConfigureAwait(false));
@@ -53,6 +53,7 @@ public sealed class NamedPipeDeviceClient : IDeviceClient
             var capabilities = await GetCapabilitiesAsync(ct).ConfigureAwait(false);
             Publish("capabilities", ConnectionState.Connected, snapshot, capabilities);
             _watch ??= Task.Run(() => WatchAsync(_stop.Token));
+            _hotkeyWatch ??= Task.Run(() => WatchHotkeysAsync(_stop.Token));
             return (capabilities, snapshot);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
@@ -148,6 +149,71 @@ public sealed class NamedPipeDeviceClient : IDeviceClient
                 catch (OperationCanceledException) { return; }
             }
         }
+    }
+
+
+    private async Task WatchHotkeysAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                using var pipe = await ConnectAsync(ct).ConfigureAwait(false);
+                using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, true);
+                using var writer = CreateWriter(pipe);
+                await SendAsync(writer, "subscribeHotkey", null, ct, reader).ConfigureAwait(false);
+                long revision = 0;
+                while (!ct.IsCancellationRequested)
+                {
+                    using var frame = await ReadFrameAsync(reader, ct).ConfigureAwait(false);
+                    var root = frame.RootElement;
+                    if (root.GetProperty("v").GetInt32() != 1) throw new IOException("热键订阅协议不匹配");
+                    if (ReadText(root, "event") != "hotkey") continue;
+                    long next = root.GetProperty("revision").GetInt64();
+                    if (next <= revision) continue;
+                    revision = next;
+                    var evt = ParseHotkey(root.GetProperty("data"));
+                    if (evt is not null) HotkeyReceived?.Invoke(evt);
+                }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Trace.WriteLine(ex);
+                try { await Task.Delay(3000, ct).ConfigureAwait(false); }
+                catch (OperationCanceledException) { return; }
+            }
+        }
+    }
+
+    private static HotkeyEvent? ParseHotkey(JsonElement data)
+    {
+        var action = ReadText(data, "action");
+        var title = action switch
+        {
+            "keyboardBacklight" => "键盘背光",
+            "touchpad" => "触摸板",
+            "fnLock" => "Fn 锁",
+            "performanceMode" => "性能档位",
+            "microphoneMute" => "麦克风静音键",
+            "refreshRate" => "刷新率快捷键",
+            _ => null
+        };
+        if (title is null) return null;
+        var state = ReadText(data, "state");
+        var label = state switch
+        {
+            "on" => "已开启",
+            "off" => "已关闭",
+            "low" => "低亮度",
+            "high" => "高亮度",
+            "balanced" => "平衡档",
+            "performance" => "性能档",
+            _ => "已收到按键，状态未确认"
+        };
+        return new(data.GetProperty("id").GetString()!, data.GetProperty("timestamp").GetDateTimeOffset(),
+            $"0x{data.GetProperty("code").GetUInt32():X2}", title, label, state is not null,
+            action == "refreshRate" ? 4000 : 1000);
     }
 
     private DeviceSnapshot AcceptSnapshot(JsonElement row)

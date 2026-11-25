@@ -31,7 +31,7 @@
     "cpuMHz": "number|null"
   },
   "capabilities": "Per feature {readable,writable,values,reason}. Refresh after status or reconnect.",
-  "subscriptions": "Dedicated connection per subscription. Ack then {v,event,instanceId,revision,data}. status carries full snapshot. Hotkey carries {id,timestamp,action,state}. Reconnect and refresh capabilities and snapshot on restart or gap. Drop stale revisions; never replay writes or historical hotkeys.",
+  "subscriptions": "Dedicated connection per subscription. Ack then {v,event,instanceId,revision,data}. status carries full snapshot. hotkey carries {id,timestamp,action,state,code}. Hotkey revisions are independent of snapshot revisions. Idle hotkey streams send hotkeyHeartbeat with data.available. State is null if there is no confirmed post-action state. Reconnect and refresh capabilities and snapshot on restart or gap. Drop stale revisions; never replay writes or historical hotkeys.",
   "examples": [
     {
       "v": 1,
@@ -108,6 +108,19 @@
       "error": {
         "code": "InvalidRequest",
         "message": "InvalidRequest"
+      }
+    },
+    {
+      "v": 1,
+      "event": "hotkey",
+      "instanceId": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "data": {
+        "id": "00000000-0000-4000-8000-000000000001:1",
+        "timestamp": "2026-11-25T00:00:00Z",
+        "action": "touchpad",
+        "state": "off",
+        "code": 48
       }
     }
   ]

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.IO;
 using System.IO.Pipes;
 using System.Management;
@@ -18,10 +19,107 @@ internal sealed class ControlService : ServiceBase
     const string Pipe = "Mechrevo.Control.v1";
     static readonly Encoding Utf8 = new UTF8Encoding(false, true);
     static readonly string Instance = Guid.NewGuid().ToString();
-    const string Version = "0.2.1";
+    const string Version = "0.3.0";
     const string VerifiedBios = "WUJIE14Max_Dove4_LNL326_MC_OLED_Rev05";
     static readonly object DeviceGate = new object();
     static volatile bool verifiedBios;
+    static volatile bool biosChecked;
+    static readonly object HotkeyGate = new object();
+    static readonly List<BlockingCollection<HotkeyNotice>> HotkeyClients = new List<BlockingCollection<HotkeyNotice>>();
+    static volatile bool hotkeysReady;
+    static long hotkeyRevision;
+
+    sealed class HotkeyNotice {
+        public long Revision;
+        public object Data;
+    }
+
+    static void OnFirmwareEvent(object sender, EventArrivedEventArgs evt) {
+        uint code;
+        using(var row = evt.NewEvent) {
+            try { code = Convert.ToUInt32(row["Force"]); }
+            catch(ManagementException) { return; }
+            catch(InvalidCastException) { return; }
+            catch(OverflowException) { return; }
+        }
+        string action, state;
+        switch(code) {
+            case 0x20: action = "keyboardBacklight"; state = "off"; break;
+            case 0x21: action = "keyboardBacklight"; state = "low"; break;
+            case 0x22: action = "keyboardBacklight"; state = "high"; break;
+            case 0x30: action = "touchpad"; state = "off"; break;
+            case 0x31: action = "touchpad"; state = "on"; break;
+            case 0x41: action = "performanceMode"; state = "balanced"; break;
+            case 0x42: action = "performanceMode"; state = "performance"; break;
+            case 0x50: action = "fnLock"; state = "off"; break;
+            case 0x51: action = "fnLock"; state = "on"; break;
+            case 0xA1: action = "microphoneMute"; state = null; break;
+            case 0xA2: action = "refreshRate"; state = null; break;
+            default: return;
+        }
+        lock(HotkeyGate) {
+            long sequence = ++hotkeyRevision;
+            var notice = new HotkeyNotice {
+                Revision = sequence,
+                Data = new {id = Instance + ":" + sequence, timestamp = DateTime.UtcNow.ToString("o"), action, state, code}
+            };
+            foreach(var client in HotkeyClients) client.TryAdd(notice);
+        }
+    }
+
+    static void ListenHotkeys() {
+        while(!stopping && !verifiedBios) {
+            if(biosChecked) return;
+            Thread.Sleep(250);
+        }
+        while(!stopping) {
+            {
+                var ended = new object();
+                bool wasStopped = false;
+                try {
+                    using(var watcher = new ManagementEventWatcher(@"root\wmi", "SELECT * FROM OemWMIEvent")) {
+                        watcher.EventArrived += OnFirmwareEvent;
+                        watcher.Stopped += (_, args) => {
+                            lock(ended) { wasStopped = true; Monitor.PulseAll(ended); }
+                        };
+                        watcher.Start();
+                        lock(ended) {
+                            hotkeysReady = !wasStopped;
+                            while(!stopping && !wasStopped) Monitor.Wait(ended, 500);
+                            hotkeysReady = false;
+                        }
+                    }
+                } catch(Exception ex) {
+                    hotkeysReady = false;
+                    System.Diagnostics.Trace.WriteLine(ex);
+                }
+            }
+            if(!stopping) Thread.Sleep(3000);
+        }
+    }
+
+    static void StreamHotkeys(StreamWriter writer, string requestId) {
+        using(var events = new BlockingCollection<HotkeyNotice>(32)) {
+            lock(HotkeyGate) HotkeyClients.Add(events);
+            try {
+                writer.WriteLine(Json(new {v = 1, requestId, result = new {subscribed = true}}));
+                while(!stopping) {
+                    HotkeyNotice notice;
+                    if(events.TryTake(out notice, 8000))
+                        writer.WriteLine(Json(new {v = 1, @event = "hotkey", instanceId = Instance,
+                            revision = notice.Revision, data = notice.Data}));
+                    else {
+                        writer.WriteLine(Json(new {v = 1, @event = "hotkeyHeartbeat", instanceId = Instance,
+                            revision = Interlocked.Read(ref hotkeyRevision), data = new {available = hotkeysReady}}));
+                        if(!hotkeysReady) return;
+                    }
+                }
+            } finally {
+                lock(HotkeyGate) HotkeyClients.Remove(events);
+            }
+        }
+    }
+
     static readonly object Gate = new object();
     static long revision;
     static Dictionary<string,object> snapshot;
@@ -141,6 +239,7 @@ internal sealed class ControlService : ServiceBase
     static void Sample(PackagePowerCounter packagePower) {
         object model=Try(()=>First("Win32_ComputerSystem","Model"));
         verifiedBios = string.Equals(Try(()=>First("Win32_BIOS","SMBIOSBIOSVersion")) as string, VerifiedBios, StringComparison.Ordinal);
+        biosChecked = true;
         while(!stopping) {
             var power=SystemInformation.PowerStatus;
             var flag=power.BatteryChargeStatus;
@@ -185,7 +284,11 @@ internal sealed class ControlService : ServiceBase
                     else if(!object.Equals(Get(req,"v"),1)) error="VersionMismatch";
                     else if(method=="setPerformanceMode")
                         ChangeMode(pipe, Get(req,"mode") as string, out error, out message, out result);
-                    else if(method=="subscribeHotkey") error="CapabilityUnavailable";
+                    else if(method=="subscribeHotkey") {
+                        if(hotkeysReady) { StreamHotkeys(writer, id); return; }
+                        error = "CapabilityUnavailable";
+                        message = "OEM hotkey event source is not available.";
+                    }
                     else if(row==null) error="Busy";
                     else if(method=="getSnapshot") result=row;
                     else if(method=="getCapabilities") {
@@ -195,6 +298,8 @@ internal sealed class ControlService : ServiceBase
                                 field=="mode"?new[]{"balanced","performance"}:new string[0],
                                 field=="mode"?(row["modeError"] as string ?? (verifiedBios ? null : "Firmware writes require Dove4 Rev05"))
                                     :row[field]==null?"Reading unavailable":null);
+                        caps["hotkeys"] = new {readable = hotkeysReady, writable = false,
+                            values = new string[0], reason = hotkeysReady ? null : "OEM hotkey event source unavailable"};
                         result=caps;
                     }
                     else if(method=="subscribeStatus") result=new {subscribed=true};
@@ -236,6 +341,7 @@ internal sealed class ControlService : ServiceBase
         stopping=false;
         new Thread(Sample){IsBackground=true}.Start();
         new Thread(Listen){IsBackground=true}.Start();
+        new Thread(ListenHotkeys){IsBackground=true}.Start();
     }
     protected override void OnStop() {
         lock(Gate) {stopping=true;if(pending!=null) pending.Dispose();Monitor.PulseAll(Gate);}

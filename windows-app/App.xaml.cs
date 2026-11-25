@@ -32,6 +32,7 @@ public partial class App : System.Windows.Application
 
         // Single replaceable client entry point
         DeviceClient = e.Args.Contains("--demo") ? new DemoDeviceClient() : new NamedPipeDeviceClient();
+        OsdEnabled = DeviceClient.DataSource == "demo";
         DeviceClient.StatusChanged += OnClientStatusChanged;
         DeviceClient.HotkeyReceived += OnClientHotkeyReceived;
 
@@ -54,7 +55,7 @@ public partial class App : System.Windows.Application
         menu.Items.Add(_balancedItem);
         menu.Items.Add(_performanceItem);
 
-        var osdToggle = new Forms.ToolStripMenuItem("启用本应用 OSD 提示") { Checked = true, CheckOnClick = true };
+        var osdToggle = new Forms.ToolStripMenuItem("启用本应用 OSD 提示") { Checked = OsdEnabled, CheckOnClick = true };
         osdToggle.CheckedChanged += (_, _) => OsdEnabled = osdToggle.Checked;
         menu.Items.Add(osdToggle);
 
@@ -131,12 +132,14 @@ public partial class App : System.Windows.Application
 
     private void OnClientHotkeyReceived(HotkeyEvent evt)
     {
-        if (!OsdEnabled) return;
         Dispatcher.BeginInvoke(() =>
         {
+            if (!OsdEnabled) return;
             _osdWindow?.Close();
-            _osdWindow = new OsdWindow(evt);
-            _osdWindow.Show();
+            var osd = new OsdWindow(evt);
+            _osdWindow = osd;
+            osd.Closed += (_, _) => { if (_osdWindow == osd) _osdWindow = null; };
+            osd.Show();
         });
     }
 

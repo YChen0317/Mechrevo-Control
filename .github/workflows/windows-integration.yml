@@ -17,7 +17,7 @@ jobs:
         run: |
           dotnet publish windows-app/MechrevoControl.Frontend.csproj -c Release -r win-x64 --self-contained true -o out
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Expand-Archive backend/dist/Mechrevo-0.2.1.zip out -Force
+          Expand-Archive backend/dist/Mechrevo-0.3.0.zip out -Force
       - uses: actions/upload-artifact@v4
         with:
           name: Mechrevo-Control-Windows-x64
