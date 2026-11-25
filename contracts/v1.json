@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "pipe": "Mechrevo.Control.v1",
+  "encoding": "UTF-8 without BOM; LF terminated JSON objects; maximum request 4096 bytes",
+  "request": {
+    "v": 1,
+    "requestId": "string, 1..128 characters",
+    "method": [
+      "getSnapshot",
+      "getCapabilities",
+      "setPerformanceMode",
+      "subscribeStatus",
+      "subscribeHotkey"
+    ],
+    "mode": [
+      "balanced",
+      "performance"
+    ]
+  },
+  "response": "{v,requestId,result} or {v,requestId,error:{code,message}}",
+  "snapshot": {
+    "instanceId": "UUID per process",
+    "revision": "increasing integer per sample",
+    "timestamp": "UTC ISO 8601",
+    "model": "string|null",
+    "mode": "balanced|performance|null",
+    "ac": "boolean|null",
+    "batteryPercent": "0..100|null",
+    "charging": "boolean|null",
+    "packageW": "number|null",
+    "cpuMHz": "number|null",
+    "deviceGeneration": "optional integer; increases when Windows suspends or resumes; hardware readings are refreshed for the new generation"
+  },
+  "capabilities": "Per feature {readable,writable,values,reason}. Refresh after status or reconnect.",
+  "subscriptions": "Dedicated connection per subscription. Ack then {v,event,instanceId,revision,data}. status carries full snapshot. hotkey carries {id,timestamp,action,state,code}. Hotkey revisions are independent of snapshot revisions. Idle hotkey streams send hotkeyHeartbeat with data.available. State is null if there is no confirmed post-action state. Reconnect and refresh capabilities and snapshot on restart or gap. Drop stale revisions; never replay writes or historical hotkeys.",
+  "examples": [
+    {
+      "v": 1,
+      "requestId": "1",
+      "method": "setPerformanceMode",
+      "mode": "performance"
+    },
+    {
+      "v": 1,
+      "requestId": "1",
+      "result": {
+        "mode": "performance"
+      }
+    },
+    {
+      "v": 1,
+      "requestId": "1",
+      "error": {
+        "code": "CapabilityUnavailable",
+        "message": "Write path unverified"
+      }
+    },
+    {
+      "v": 1,
+      "requestId": "1",
+      "error": {
+        "code": "ReadbackMismatch",
+        "message": "Requested performance, read back balanced"
+      }
+    },
+    {
+      "v": 1,
+      "requestId": "1",
+      "error": {
+        "code": "ServiceOffline",
+        "message": "Client could not connect"
+      }
+    },
+    {
+      "v": 1,
+      "requestId": "1",
+      "error": {
+        "code": "VersionMismatch",
+        "message": "VersionMismatch"
+      }
+    },
+    {
+      "v": 1,
+      "requestId": "1",
+      "error": {
+        "code": "AccessDenied",
+        "message": "AccessDenied"
+      }
+    },
+    {
+      "v": 1,
+      "requestId": "1",
+      "error": {
+        "code": "Busy",
+        "message": "Busy"
+      }
+    },
+    {
+      "v": 1,
+      "requestId": "1",
+      "error": {
+        "code": "Timeout",
+        "message": "Timeout"
+      }
+    },
+    {
+      "v": 1,
+      "requestId": "1",
+      "error": {
+        "code": "InvalidRequest",
+        "message": "InvalidRequest"
+      }
+    },
+    {
+      "v": 1,
+      "event": "hotkey",
+      "instanceId": "00000000-0000-4000-8000-000000000001",
+      "revision": 1,
+      "data": {
+        "id": "00000000-0000-4000-8000-000000000001:1",
+        "timestamp": "2026-11-25T00:00:00Z",
+        "action": "touchpad",
+        "state": "off",
+        "code": 48
+      }
+    }
+  ]
+}
