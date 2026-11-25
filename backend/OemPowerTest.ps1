@@ -98,8 +98,24 @@ function Check-Quiescent {
     }
 }
 
+function Wait-ForModeSnapshot([string]$mode) {
+    $deadline = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $snap = Request 'getSnapshot' ''
+        if ($snap.ac -ne $true) { throw 'AC disconnected during phase start.' }
+        if ($snap.mode -eq $mode) {
+            Log "Service snapshot synchronized: mode=$mode revision=$($snap.revision)"
+            return
+        }
+        Start-Sleep -Milliseconds 500
+    } while ($deadline.Elapsed.TotalSeconds -lt 12)
+    RequireMode $mode
+    throw "Service snapshot did not synchronize to $mode within 12 seconds (last mode=$($snap.mode))."
+}
+
 function Capture-Phase([string]$round,[int]$step,[string]$mode) {
     RequireMode $mode
+    Wait-ForModeSnapshot $mode
     $timer = [Diagnostics.Stopwatch]::StartNew()
     $rows = [System.Collections.Generic.List[object]]::new()
     $revision = -1
