@@ -19,9 +19,23 @@ internal sealed class ControlService : ServiceBase
     const string Pipe = "Mechrevo.Control.v1";
     static readonly Encoding Utf8 = new UTF8Encoding(false, true);
     static readonly string Instance = Guid.NewGuid().ToString();
-    const string Version = "0.3.0";
+    const string Version = "0.3.1";
     const string VerifiedBios = "WUJIE14Max_Dove4_LNL326_MC_OLED_Rev05";
     static readonly object DeviceGate = new object();
+    static readonly AutoResetEvent SampleWake = new AutoResetEvent(false);
+    static volatile int deviceGeneration;
+    static volatile bool hardwareSuspended;
+
+    static void InvalidateHardware(bool suspended) {
+        lock(Gate) {
+            hardwareSuspended = suspended;
+            deviceGeneration++;
+            snapshot = null;
+            hotkeysReady = false;
+            Monitor.PulseAll(Gate);
+        }
+        SampleWake.Set();
+    }
     static volatile bool verifiedBios;
     static volatile bool biosChecked;
     static readonly object HotkeyGate = new object();
@@ -31,10 +45,11 @@ internal sealed class ControlService : ServiceBase
 
     sealed class HotkeyNotice {
         public long Revision;
+        public int Generation;
         public object Data;
     }
 
-    static void OnFirmwareEvent(object sender, EventArrivedEventArgs evt) {
+    static void OnFirmwareEvent(int generation, EventArrivedEventArgs evt) {
         uint code;
         using(var row = evt.NewEvent) {
             try { code = Convert.ToUInt32(row["Force"]); }
@@ -58,9 +73,11 @@ internal sealed class ControlService : ServiceBase
             default: return;
         }
         lock(HotkeyGate) {
+            if(hardwareSuspended || generation != deviceGeneration) return;
             long sequence = ++hotkeyRevision;
             var notice = new HotkeyNotice {
                 Revision = sequence,
+                Generation = generation,
                 Data = new {id = Instance + ":" + sequence, timestamp = DateTime.UtcNow.ToString("o"), action, state, code}
             };
             foreach(var client in HotkeyClients) client.TryAdd(notice);
@@ -73,28 +90,32 @@ internal sealed class ControlService : ServiceBase
             Thread.Sleep(250);
         }
         while(!stopping) {
-            {
-                var ended = new object();
-                bool wasStopped = false;
-                try {
-                    using(var watcher = new ManagementEventWatcher(@"root\wmi", "SELECT * FROM OemWMIEvent")) {
-                        watcher.EventArrived += OnFirmwareEvent;
-                        watcher.Stopped += (_, args) => {
-                            lock(ended) { wasStopped = true; Monitor.PulseAll(ended); }
-                        };
-                        watcher.Start();
-                        lock(ended) {
-                            hotkeysReady = !wasStopped;
-                            while(!stopping && !wasStopped) Monitor.Wait(ended, 500);
-                            hotkeysReady = false;
-                        }
-                    }
-                } catch(Exception ex) {
-                    hotkeysReady = false;
-                    System.Diagnostics.Trace.WriteLine(ex);
-                }
+            if(hardwareSuspended) {
+                Thread.Sleep(500);
+                continue;
             }
-            if(!stopping) Thread.Sleep(3000);
+            int generation = deviceGeneration;
+            var ended = new object();
+            bool wasStopped = false;
+            try {
+                using(var watcher = new ManagementEventWatcher(@"root\wmi", "SELECT * FROM OemWMIEvent")) {
+                    watcher.EventArrived += (_, evt) => OnFirmwareEvent(generation, evt);
+                    watcher.Stopped += (_, args) => {
+                        lock(ended) { wasStopped = true; Monitor.PulseAll(ended); }
+                    };
+                    watcher.Start();
+                    lock(ended) {
+                        lock(Gate) hotkeysReady = !wasStopped && !hardwareSuspended && generation == deviceGeneration;
+                        while(!stopping && !hardwareSuspended && generation == deviceGeneration && !wasStopped)
+                            Monitor.Wait(ended, 500);
+                        hotkeysReady = false;
+                    }
+                }
+            } catch(Exception ex) {
+                hotkeysReady = false;
+                System.Diagnostics.Trace.WriteLine(ex);
+            }
+            if(!stopping && generation == deviceGeneration) Thread.Sleep(3000);
         }
     }
 
@@ -105,10 +126,11 @@ internal sealed class ControlService : ServiceBase
                 writer.WriteLine(Json(new {v = 1, requestId, result = new {subscribed = true}}));
                 while(!stopping) {
                     HotkeyNotice notice;
-                    if(events.TryTake(out notice, 8000))
-                        writer.WriteLine(Json(new {v = 1, @event = "hotkey", instanceId = Instance,
-                            revision = notice.Revision, data = notice.Data}));
-                    else {
+                    if(events.TryTake(out notice, 8000)) {
+                        if(!hardwareSuspended && notice.Generation == deviceGeneration)
+                            writer.WriteLine(Json(new {v = 1, @event = "hotkey", instanceId = Instance,
+                                revision = notice.Revision, data = notice.Data}));
+                    } else {
                         writer.WriteLine(Json(new {v = 1, @event = "hotkeyHeartbeat", instanceId = Instance,
                             revision = Interlocked.Read(ref hotkeyRevision), data = new {available = hotkeysReady}}));
                         if(!hotkeysReady) return;
@@ -188,9 +210,15 @@ internal sealed class ControlService : ServiceBase
         }
         if(!Monitor.TryEnter(DeviceGate, 1000)) { error = "Busy"; return; }
         try {
+            int generation;
+            lock(Gate) {
+                if(snapshot == null || hardwareSuspended) { error = "Busy"; return; }
+                generation = deviceGeneration;
+            }
             string initial;
             try { initial = ReadMode(); }
             catch(Exception ex) { error = "CapabilityUnavailable"; message = ex.Message; return; }
+            if(generation != deviceGeneration || hardwareSuspended) { error = "Busy"; return; }
             if(initial == target) { result = new {mode = initial}; return; }
 
             string setterError = null;
@@ -198,7 +226,7 @@ internal sealed class ControlService : ServiceBase
             catch(Exception ex) { setterError = ex.Message; }
 
             string observed = null, readError = null;
-            for(int attempt = 0; attempt < 3; attempt++) {
+            for(int attempt = 0; attempt < 3 && generation == deviceGeneration; attempt++) {
                 try {
                     observed = ReadMode();
                     readError = null;
@@ -207,6 +235,11 @@ internal sealed class ControlService : ServiceBase
                 if(attempt < 2) Thread.Sleep(250);
             }
             lock(Gate) {
+                if(generation != deviceGeneration) {
+                    error = "Timeout";
+                    message = "Power transition interrupted the readback. Refresh before requesting another change.";
+                    return;
+                }
                 if(snapshot != null) {
                     snapshot = new Dictionary<string, object>(snapshot);
                     snapshot["mode"] = observed;
@@ -240,7 +273,17 @@ internal sealed class ControlService : ServiceBase
         object model=Try(()=>First("Win32_ComputerSystem","Model"));
         verifiedBios = string.Equals(Try(()=>First("Win32_BIOS","SMBIOSBIOSVersion")) as string, VerifiedBios, StringComparison.Ordinal);
         biosChecked = true;
+        int priorGeneration = -1;
         while(!stopping) {
+            if(hardwareSuspended) {
+                SampleWake.WaitOne(2000);
+                continue;
+            }
+            int generation = deviceGeneration;
+            if(generation != priorGeneration) {
+                packagePower.Dispose();
+                priorGeneration = generation;
+            }
             var power=SystemInformation.PowerStatus;
             var flag=power.BatteryChargeStatus;
             bool battery=flag!=BatteryChargeStatus.Unknown && (flag & BatteryChargeStatus.NoSystemBattery)==0;
@@ -248,19 +291,25 @@ internal sealed class ControlService : ServiceBase
             object packageW = Try(() => packagePower.ReadWatts());
             object cpuMHz = Try(()=>First("Win32_Processor","CurrentClockSpeed"));
             lock(DeviceGate) {
+                if(hardwareSuspended || generation != deviceGeneration) continue;
                 string mode = null, modeError = null;
                 try {mode = ReadMode();} catch(Exception ex) {modeError = ex.Message;}
                 var row=new Dictionary<string,object> {
-                    {"serviceVersion",Version},{"instanceId",Instance},{"revision",++revision},{"model",model},{"mode",mode},{"modeError",modeError},
+                    {"serviceVersion",Version},{"instanceId",Instance},{"deviceGeneration",generation},{"revision",++revision},{"model",model},{"mode",mode},{"modeError",modeError},
                     {"ac",power.PowerLineStatus==PowerLineStatus.Unknown ? null : (object)(power.PowerLineStatus==PowerLineStatus.Online)},
                     {"batteryPercent",battery && percent>=0 && percent<=1 ? (object)Math.Round(percent*100) : null},
                     {"charging",battery ? (object)((flag & BatteryChargeStatus.Charging)!=0) : null},
                     {"packageW",packageW},{"cpuMHz",cpuMHz},
                     {"timestamp",DateTime.UtcNow.ToString("o")}
                 };
-                lock(Gate) {snapshot=row;Monitor.PulseAll(Gate);}
+                lock(Gate) {
+                    if(!hardwareSuspended && generation == deviceGeneration) {
+                        snapshot = row;
+                        Monitor.PulseAll(Gate);
+                    }
+                }
             }
-            Thread.Sleep(2000);
+            SampleWake.WaitOne(2000);
         }
     }
     static object Cap(object value,bool writable,string[] values,string reason) {
@@ -310,8 +359,10 @@ internal sealed class ControlService : ServiceBase
                         long seen=0;
                         while(!stopping) {
                             lock(Gate) {
-                                while(!stopping && (long)snapshot["revision"]<=seen) Monitor.Wait(Gate,3000);
-                                row=snapshot;
+                                while(!stopping && (snapshot == null || (long)snapshot["revision"] <= seen))
+                                    Monitor.Wait(Gate,3000);
+                                if(stopping) return;
+                                row = snapshot;
                             }
                             seen=(long)row["revision"];
                             writer.WriteLine(Json(new {v=1,@event="status",instanceId=Instance,revision=seen,data=row}));
@@ -337,6 +388,24 @@ internal sealed class ControlService : ServiceBase
             ThreadPool.QueueUserWorkItem(_=>Serve(pipe));
         } catch(IOException){Thread.Sleep(200);} catch(ObjectDisposedException){return;}
     }
+    ControlService() {
+        CanHandlePowerEvent = true;
+    }
+
+    protected override bool OnPowerEvent(PowerBroadcastStatus status) {
+        switch(status) {
+            case PowerBroadcastStatus.Suspend:
+                InvalidateHardware(true);
+                break;
+            case PowerBroadcastStatus.ResumeAutomatic:
+            case PowerBroadcastStatus.ResumeCritical:
+            case PowerBroadcastStatus.ResumeSuspend:
+                InvalidateHardware(false);
+                break;
+        }
+        return true;
+    }
+
     protected override void OnStart(string[] args) {
         stopping=false;
         new Thread(Sample){IsBackground=true}.Start();
@@ -345,6 +414,7 @@ internal sealed class ControlService : ServiceBase
     }
     protected override void OnStop() {
         lock(Gate) {stopping=true;if(pending!=null) pending.Dispose();Monitor.PulseAll(Gate);}
+        SampleWake.Set();
     }
     static Dictionary<string, object> Request(string method, string mode, StringBuilder log) {
         string id = Guid.NewGuid().ToString("N");

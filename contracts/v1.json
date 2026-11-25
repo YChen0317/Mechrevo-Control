@@ -28,7 +28,8 @@
     "batteryPercent": "0..100|null",
     "charging": "boolean|null",
     "packageW": "number|null",
-    "cpuMHz": "number|null"
+    "cpuMHz": "number|null",
+    "deviceGeneration": "optional integer; increases when Windows suspends or resumes; hardware readings are refreshed for the new generation"
   },
   "capabilities": "Per feature {readable,writable,values,reason}. Refresh after status or reconnect.",
   "subscriptions": "Dedicated connection per subscription. Ack then {v,event,instanceId,revision,data}. status carries full snapshot. hotkey carries {id,timestamp,action,state,code}. Hotkey revisions are independent of snapshot revisions. Idle hotkey streams send hotkeyHeartbeat with data.available. State is null if there is no confirmed post-action state. Reconnect and refresh capabilities and snapshot on restart or gap. Drop stale revisions; never replay writes or historical hotkeys.",
