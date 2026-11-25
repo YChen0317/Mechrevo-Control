@@ -8,7 +8,7 @@
 
 ## 前端交接
 
-构建 Windows 桌面界面从[前端交接文档](docs/frontend-handoff.md)开始。文档包含首版页面范围、演示数据要求、设备后端接入约定和验收条件。[控制台实现底稿](docs/dove4-implementation-reference.md)汇总实机证据与待验证能力。
+Windows 桌面前端从现有 0.3.1 服务和 IPC v1 重新实现。详见[前端交接文档](docs/frontend-handoff.md)和[可复制的交接 prompt](docs/frontend-agent-prompt.md)。[控制台实现底稿](docs/dove4-implementation-reference.md)汇总实机证据与待验证能力。
 
 ## 日用流畅档实验
 
@@ -18,7 +18,8 @@
 
 - `Get-PowerPlan.ps1` 读取当前 Windows 电源计划。已在目标机器验证输出与 `powercfg /getactivescheme` 一致。
 - `analysis/Read-OemIl.ps1` 使用 PowerShell 7 和 .NET 元数据 API 读取原厂程序集中的方法指令，运行时只打开文件。
-- [调查记录](docs/oem-research.md) 记录已确认的 WinUI 消息路径、服务端限制与复查命令。厂商档位和充电设置的实际写入还有待验证。
+- 0.3.1 服务已在 Dove4 Rev05 实机验证双向切档、封装功耗、触摸板与背光事件以及睡眠恢复。[服务包与使用说明](backend/README.md)
+- [调查记录](docs/oem-research.md) 记录已确认的 WinUI 消息路径、服务端限制与复查命令。充电设置的写入仍待独立验证。
 
 ## 运行只读脚本
 
