@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Pipes;
 using System.Management;
+using System.Runtime.InteropServices;
 using Microsoft.Management.Infrastructure;
 using System.Security.AccessControl;
 using System.Security.Principal;
@@ -17,7 +18,7 @@ internal sealed class ControlService : ServiceBase
     const string Pipe = "Mechrevo.Control.v1";
     static readonly Encoding Utf8 = new UTF8Encoding(false, true);
     static readonly string Instance = Guid.NewGuid().ToString();
-    const string Version = "0.2.0";
+    const string Version = "0.2.1";
     const string VerifiedBios = "WUJIE14Max_Dove4_LNL326_MC_OLED_Rev05";
     static readonly object DeviceGate = new object();
     static volatile bool verifiedBios;
@@ -134,6 +135,10 @@ internal sealed class ControlService : ServiceBase
     }
     static object Try(Func<object> read) { try {return read();} catch(Exception) {return null;} }
     static void Sample() {
+        using(var packagePower = new PackagePowerCounter()) Sample(packagePower);
+    }
+
+    static void Sample(PackagePowerCounter packagePower) {
         object model=Try(()=>First("Win32_ComputerSystem","Model"));
         verifiedBios = string.Equals(Try(()=>First("Win32_BIOS","SMBIOSBIOSVersion")) as string, VerifiedBios, StringComparison.Ordinal);
         while(!stopping) {
@@ -141,6 +146,7 @@ internal sealed class ControlService : ServiceBase
             var flag=power.BatteryChargeStatus;
             bool battery=flag!=BatteryChargeStatus.Unknown && (flag & BatteryChargeStatus.NoSystemBattery)==0;
             var percent=power.BatteryLifePercent;
+            object packageW = Try(() => packagePower.ReadWatts());
             object cpuMHz = Try(()=>First("Win32_Processor","CurrentClockSpeed"));
             lock(DeviceGate) {
                 string mode = null, modeError = null;
@@ -150,7 +156,7 @@ internal sealed class ControlService : ServiceBase
                     {"ac",power.PowerLineStatus==PowerLineStatus.Unknown ? null : (object)(power.PowerLineStatus==PowerLineStatus.Online)},
                     {"batteryPercent",battery && percent>=0 && percent<=1 ? (object)Math.Round(percent*100) : null},
                     {"charging",battery ? (object)((flag & BatteryChargeStatus.Charging)!=0) : null},
-                    {"packageW",null},{"cpuMHz",cpuMHz},
+                    {"packageW",packageW},{"cpuMHz",cpuMHz},
                     {"timestamp",DateTime.UtcNow.ToString("o")}
                 };
                 lock(Gate) {snapshot=row;Monitor.PulseAll(Gate);}
@@ -321,4 +327,70 @@ internal sealed class ControlService : ServiceBase
             File.WriteAllText(path,log.ToString(),Utf8);Console.WriteLine(path);
         }
     }
+}
+
+internal sealed class PackagePowerCounter : IDisposable
+{
+    const string CounterPath = @"\Energy Meter(RAPL_Package0_PKG)\Power";
+    const uint DoubleWithoutCap = 0x00000200 | 0x00008000;
+
+    IntPtr query;
+    IntPtr counter;
+    bool primed;
+
+    internal double? ReadWatts() {
+        if(query == IntPtr.Zero) {
+            if(PdhOpenQueryW(null, UIntPtr.Zero, out query) != 0)
+                return null;
+            if(PdhAddEnglishCounterW(query, CounterPath, UIntPtr.Zero, out counter) != 0) {
+                Dispose();
+                return null;
+            }
+        }
+
+        if(PdhCollectQueryData(query) != 0) {
+            Dispose();
+            return null;
+        }
+        // AverageCount64 needs two collected samples to report power.
+        if(!primed) {
+            primed = true;
+            return null;
+        }
+
+        CounterValue value;
+        if(PdhGetFormattedCounterValue(counter, DoubleWithoutCap, IntPtr.Zero, out value) != 0 ||
+                value.Status > 1 || double.IsNaN(value.Value) || double.IsInfinity(value.Value) || value.Value < 0) {
+            Dispose();
+            return null;
+        }
+        return value.Value / 1000d;
+    }
+
+    public void Dispose() {
+        if(query != IntPtr.Zero) PdhCloseQuery(query);
+        query = counter = IntPtr.Zero;
+        primed = false;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct CounterValue {
+        internal uint Status;
+        internal double Value;
+    }
+
+    [DllImport("pdh.dll", ExactSpelling = true, CharSet = CharSet.Unicode)]
+    static extern uint PdhOpenQueryW(string source, UIntPtr userData, out IntPtr query);
+
+    [DllImport("pdh.dll", ExactSpelling = true, CharSet = CharSet.Unicode)]
+    static extern uint PdhAddEnglishCounterW(IntPtr query, string path, UIntPtr userData, out IntPtr counter);
+
+    [DllImport("pdh.dll", ExactSpelling = true)]
+    static extern uint PdhCollectQueryData(IntPtr query);
+
+    [DllImport("pdh.dll", ExactSpelling = true)]
+    static extern uint PdhGetFormattedCounterValue(IntPtr counter, uint format, IntPtr type, out CounterValue value);
+
+    [DllImport("pdh.dll", ExactSpelling = true)]
+    static extern uint PdhCloseQuery(IntPtr query);
 }
